@@ -3,8 +3,7 @@ lib := libfs.a
 objs := fs.o disk.o
 
 CC := gcc
-CFLAGS := -Wall -Werror -g -fsanitize=address
-
+CFLAGS := -Wall -Werror -g 
 
 all: $(lib)
 
