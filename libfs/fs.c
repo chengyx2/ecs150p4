@@ -22,8 +22,6 @@ typedef struct superblock{
     uint8_t padding[4079];
 }__attribute__((__packed__)) superblock;
 
-
-
 typedef uint16_t* FAT;
 
 typedef struct root_entry{
@@ -33,7 +31,7 @@ typedef struct root_entry{
     uint8_t padding[10];
 }__attribute__((__packed__)) root_entry;
 
-typedef root_entry* root_dir[FS_FILE_MAX_COUNT];
+typedef root_entry* root_dir;
 
 superblock super_block;
 
@@ -47,7 +45,7 @@ bool mounted = false;
 
 int block_to_buffer(size_t block, void* buff, size_t length){
     for (size_t i = block; i < block + length; i++){
-        if(block_read(i, buff + i * BLOCK_SIZE) == -1)
+        if(block_read(i, buff + (i - block) * BLOCK_SIZE) == -1)
             return -1;
     }
     return 0;
@@ -55,7 +53,7 @@ int block_to_buffer(size_t block, void* buff, size_t length){
 
 int buffer_to_block(size_t block, void* buff, size_t length){
     for (size_t i = block; i < block + length; i++){
-        if(block_write(i, buff + i * BLOCK_SIZE) == -1)
+        if(block_write(i, buff + (i - block) * BLOCK_SIZE) == -1)
             return -1;
     }
     return 0;
@@ -72,8 +70,8 @@ int fat_free(){
 
 int root_free(){
     int count = 0;
-    for (int i = 1; i < FS_FILE_MAX_COUNT; i++){
-        if (root[i]->filename[0] == '\0')
+    for (int i = 0; i < FS_FILE_MAX_COUNT; i++){
+        if (root[i].filename[0] == '\0')
             count++;
     }
     return count;
@@ -85,7 +83,7 @@ int fs_mount(const char *diskname)
     char* signature = "ECS150FS";
     if(block_disk_open(diskname) == -1)
         return -1;
-
+    
     block_read(0, (void*) &super_block);
     
     if (memcmp((char*) &super_block.signature, signature, 8) != 0)
@@ -94,12 +92,14 @@ int fs_mount(const char *diskname)
     if (super_block.total_amount != block_disk_count())
         return -1;
     
-    fat_array = malloc(fat_length(super_block.FAT_amount) * sizeof(uint16_t));
+
+    fat_array = malloc(fat_length(super_block.FAT_amount) * sizeof(uint16_t) * 2);
     if (fat_array == NULL)
         return -1;
     if (block_to_buffer(1, fat_array, super_block.FAT_amount) == -1)
         return -1;
-    
+
+    root = malloc(FS_FILE_MAX_COUNT * sizeof(root_entry));
     if (block_read(super_block.root_idx, (void*) root) == -1)
         return -1;
     
