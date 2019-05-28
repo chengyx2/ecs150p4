@@ -196,7 +196,6 @@ void thread_fs_add(void *arg)
 	 */
 	if (fs_mount(diskname))
 		die("Cannot mount diskname");
-
 	if (fs_create(filename)) {
 		fs_umount();
 		die("Cannot create file");
@@ -209,7 +208,6 @@ void thread_fs_add(void *arg)
 	}
 
 	written = fs_write(fs_fd, buf, st.st_size);
-
 	if (fs_close(fs_fd)) {
 		fs_umount();
 		die("Cannot close file");

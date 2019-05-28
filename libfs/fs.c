@@ -115,7 +115,10 @@ int find_fat_next_free(){
 //check whether the filename is valid
 int check_filename(const char* filename){
     bool valid_file = false;
-    for (int i = 0; i < FS_FILENAME_LEN; i++){
+    if(filename[0] == '\0'){
+        return -1;
+    }
+    for (int i = 1; i < FS_FILENAME_LEN; i++){
         if (filename[i] == '\0'){
             valid_file = true;
             break;
@@ -506,7 +509,6 @@ int fs_write(int fd, void *buf, size_t count)
     
     for (i = 1; i < num_blocks - 1; i++){
         
-        //check if it is the last block
         if (fat_array[open_files[fd].block_idx] == FAT_EOC){
             
             fat_free_idx = find_fat_next_free();
@@ -586,10 +588,10 @@ int fs_read(int fd, void *buf, size_t count)
         res = check_and_copy(buffer, buf, count, open_files[fd].offset, 0, fd);
         return res;
     }
-        
     
     for (i = 1; i < num_blocks - 1; i++){
         //get next block idx
+        
         open_files[fd].block_idx = fat_array[open_files[fd].block_idx];
         //check if it is the last block
         if (fat_array[open_files[fd].block_idx] == FAT_EOC){

@@ -43,264 +43,143 @@ void test_unmounted(char* filename)
     assert(fs_create(filename) == -1);
     assert(fs_delete(filename) == -1);
     assert(fs_open(filename) == -1);
-    assert(fs_close(filename) == -1);
+    assert(fs_close(1) == -1);
     assert(fs_stat(1) == -1);
     assert(fs_lseek(1, 10) == -1);
     assert(fs_write(1, buffer, 10) == -1);
-    assert(fs_lseek(1, buffer, 10) == -1);
+    assert(fs_read(1, buffer, 10) == -1);
     
 }
 
-void test_filename_valid(char* diskname, char* filename){
+void test_filename_valid(char* diskname){
 
     if (fs_mount(diskname))
         die("Cannot mount diskname");
     
-    assert(fs_create("))
+    assert(fs_create("longlonglonglonglonglongfilename") == -1);
+    assert(fs_create("") == -1);
+    
+    assert(fs_delete("longlonglonglonglonglongfilename") == -1);
+    assert(fs_open("longlonglonglonglonglongfilename") == -1);
+    
+    if (fs_umount())
+        die("cannot unmount diskname");
+    
 }
 
-void thread_fs_cat(void *arg)
-{
-	struct thread_arg *t_arg = arg;
-	char *diskname, *filename, *buf;
-	int fs_fd;
-	int stat, read;
-
-	if (t_arg->argc < 2)
-		die("need <diskname> <filename>");
-
-	diskname = t_arg->argv[0];
-	filename = t_arg->argv[1];
-
-	if (fs_mount(diskname))
-		die("Cannot mount diskname");
-
-	fs_fd = fs_open(filename);
-	if (fs_fd < 0) {
-		fs_umount();
-		die("Cannot open file");
-	}
-
-	stat = fs_stat(fs_fd);
-	if (stat < 0) {
-		fs_umount();
-		die("Cannot stat file");
-	}
-	if (!stat) {
-		/* Nothing to read, file is empty */
-		printf("Empty file\n");
-		return;
-	}
-	buf = malloc(stat);
-	if (!buf) {
-		perror("malloc");
-		fs_umount();
-		die("Cannot malloc");
-	}
-
-	read = fs_read(fs_fd, buf, stat);
-
-	if (fs_close(fs_fd)) {
-		fs_umount();
-		die("Cannot close file");
-	}
-
-	if (fs_umount())
-		die("cannot unmount diskname");
-
-	printf("Read file '%s' (%d/%d bytes)\n", filename, read, stat);
-	printf("Content of the file:\n");
-	printf("%.*s", (int)stat, buf);
-
-	free(buf);
+void test_valid_file_descriptor(char* diskname){
+    if (fs_mount(diskname))
+        die("Cannot mount diskname");
+    
+    char buffer[10];
+    memset(buffer, 0, 10);
+    
+    assert(fs_close(-1) == -1);
+    assert(fs_close(32) == -1);
+    assert(fs_close(0) == -1);
+    
+    assert(fs_stat(-1) == -1);
+    assert(fs_stat(32) == -1);
+    assert(fs_stat(0) == -1);
+    
+    assert(fs_lseek(-1, 0) == -1);
+    assert(fs_lseek(32, 0) == -1);
+    assert(fs_lseek(0, 0) == -1);
+    
+    assert(fs_write(-1, buffer, 10) == -1);
+    assert(fs_write(32, buffer, 10) == -1);
+    assert(fs_write(0, buffer, 10) == -1);
+    
+    assert(fs_read(-1, buffer, 10) == -1);
+    assert(fs_read(32, buffer, 10) == -1);
+    assert(fs_read(0, buffer, 10) == -1);
+    
+    if (fs_umount())
+        die("cannot unmount diskname");
+    
 }
 
-void thread_fs_rm(void *arg)
-{
-	struct thread_arg *t_arg = arg;
-	char *diskname, *filename;
 
-	if (t_arg->argc < 2)
-		die("need <diskname> <filename>");
 
-	diskname = t_arg->argv[0];
-	filename = t_arg->argv[1];
-
-	if (fs_mount(diskname))
-		die("Cannot mount diskname");
-
-	if (fs_delete(filename)) {
-		fs_umount();
-		die("Cannot delete file");
-	}
-
-	if (fs_umount())
-		die("Cannot unmount diskname");
-
-	printf("Removed file '%s'\n", filename);
+void test_file_exist(char* diskname, char *filename, char *bad_filename){
+    if (fs_mount(diskname))
+        die("Cannot mount diskname");
+    
+    assert(fs_create(filename) == -1);
+    
+    assert(fs_delete(bad_filename) == -1);
+    
+    assert(fs_open(bad_filename) == -1);
+    
+    if (fs_umount())
+        die("cannot unmount diskname");
 }
 
-void thread_fs_add(void *arg)
-{
-	struct thread_arg *t_arg = arg;
-	char *diskname, *filename, *buf;
-	int fd, fs_fd;
-	struct stat st;
-	int written;
-
-	if (t_arg->argc < 2)
-		die("Usage: <diskname> <host filename>");
-
-	diskname = t_arg->argv[0];
-	filename = t_arg->argv[1];
-
-	/* Open file on host computer */
-	fd = open(filename, O_RDONLY);
-	if (fd < 0)
-		die_perror("open");
-	if (fstat(fd, &st))
-		die_perror("fstat");
-	if (!S_ISREG(st.st_mode))
-		die("Not a regular file: %s\n", filename);
-
-	/* Map file into buffer */
-	buf = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (!buf)
-		die_perror("mmap");
-
-	/* Now, deal with our filesystem:
-	 * - mount, create a new file, copy content of host file into this new
-	 *   file, close the new file, and umount
-	 */
-	if (fs_mount(diskname))
-		die("Cannot mount diskname");
-
-	if (fs_create(filename)) {
-		fs_umount();
-		die("Cannot create file");
-	}
-
-	fs_fd = fs_open(filename);
-	if (fs_fd < 0) {
-		fs_umount();
-		die("Cannot open file");
-	}
-
-	written = fs_write(fs_fd, buf, st.st_size);
-
-	if (fs_close(fs_fd)) {
-		fs_umount();
-		die("Cannot close file");
-	}
-
-	if (fs_umount())
-		die("Cannot unmount diskname");
-
-	printf("Wrote file '%s' (%d/%zu bytes)\n", filename, written,
-		   st.st_size);
-
-	munmap(buf, st.st_size);
-	close(fd);
+void test_open_files(char* diskname, char* filename){
+    if (fs_mount(diskname))
+        die("Cannot mount diskname");
+    
+    int fd = fs_open(filename);
+    
+    assert(fs_delete(filename) == -1);
+    
+    assert(fs_umount() == -1);
+    
+    fs_close(fd);
+    
+    if (fs_umount())
+        die("cannot unmount diskname");
 }
 
-void thread_fs_ls(void *arg)
-{
-	struct thread_arg *t_arg = arg;
-	char *diskname;
-
-	if (t_arg->argc < 1)
-		die("Usage: <diskname> <filename>");
-
-	diskname = t_arg->argv[0];
-
-	if (fs_mount(diskname))
-		die("Cannot mount diskname");
-
-	fs_ls();
-
-	if (fs_umount())
-		die("Cannot unmount diskname");
+void test_open_full(char* diskname, char* filename){
+    if (fs_mount(diskname))
+        die("Cannot mount diskname");
+    
+    for (int i = 0; i < FS_OPEN_MAX_COUNT; i++){
+        assert(fs_open(filename) == i);
+    }
+    assert(fs_open(filename) == -1);
+    
+    for (int i = 0; i < FS_OPEN_MAX_COUNT; i++){
+        assert(fs_close(i) == 0);
+    }
+    
+    if (fs_umount())
+        die("cannot unmount diskname");
 }
 
-void thread_fs_info(void *arg)
-{
-	struct thread_arg *t_arg = arg;
-	char *diskname;
-
-	if (t_arg->argc < 1)
-		die("Usage: <diskname>");
-
-	diskname = t_arg->argv[0];
-
-	if (fs_mount(diskname))
-		die("Cannot mount diskname");
-
-	fs_info();
-
-	if (fs_umount())
-		die("Cannot unmount diskname");
-}
-
-size_t get_argv(char *argv)
-{
-	long int ret = strtol(argv, NULL, 0);
-	if (ret == LONG_MIN || ret == LONG_MAX)
-		die_perror("strtol");
-	return (size_t)ret;
-}
-
-static struct {
-	const char *name;
-	void(*func)(void *);
-} commands[] = {
-	{ "info",	thread_fs_info },
-	{ "ls",		thread_fs_ls },
-	{ "add",	thread_fs_add },
-	{ "rm",		thread_fs_rm },
-	{ "cat",	thread_fs_cat },
-	{ "stat",	thread_fs_stat }
-};
-
-void usage(char *program)
-{
-	int i;
-	fprintf(stderr, "Usage: %s <command> [<arg>]\n", program);
-	fprintf(stderr, "Possible commands are:\n");
-	for (i = 0; i < ARRAY_SIZE(commands); i++)
-		fprintf(stderr, "\t%s\n", commands[i].name);
-	exit(1);
+void test_lseek(char* diskname, char* filename){
+    if (fs_mount(diskname))
+        die("Cannot mount diskname");
+    
+    int fd = fs_open(filename);
+    assert(fs_lseek(fs_stat(fd) + 1, 0) == -1);
+    
+    fs_close(fd);
+    
+    if (fs_umount())
+        die("cannot unmount diskname");
 }
 
 int main(int argc, char **argv)
 {
-	int i;
-	char *program;
-	char *cmd;
-	struct thread_arg arg;
+    char *bad_filename = "filenotexist";
+    char* diskname = argv[1];
+    char* filename = argv[2];
 
-	program = argv[0];
-
-	if (argc == 1)
-		usage(program);
-
-	/* Skip argv[0] */
-	argc--;
-	argv++;
-
-	cmd = argv[0];
-	arg.argc = --argc;
-	arg.argv = &argv[1];
-
-	for (i = 0; i < ARRAY_SIZE(commands); i++) {
-		if (!strcmp(cmd, commands[i].name)) {
-			commands[i].func(&arg);
-			break;
-		}
-	}
-	if (i == ARRAY_SIZE(commands)) {
-		test_fs_error("invalid command '%s'", cmd);
-		usage(program);
-	}
-
-	return 0;
+    test_unmounted(filename);
+    
+    test_filename_valid(diskname);
+    
+    test_valid_file_descriptor(diskname);
+    
+    test_file_exist(diskname, filename, bad_filename);
+    
+    test_open_files(diskname, filename);
+    
+    test_open_full(diskname, filename);
+    
+    test_lseek(diskname, filename);
+    
+    return 0;
 }
