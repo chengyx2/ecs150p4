@@ -126,6 +126,16 @@ int check_filename(const char* filename){
     return 0;
 }
 
+void clear_fat(size_t curr){
+    size_t next;
+    while (fat_array[curr] != FAT_EOC){
+        next = fat_array[curr];
+        fat_array[curr] = 0;
+        curr = next;
+    }
+    fat_array[curr] = 0;
+}
+
 //find the first free entry in the root array
 //also check whether the filename exists in the root array
 int check_root(const char *filename){
@@ -357,6 +367,7 @@ int fs_delete(const char *filename)
         if (open_files[i].root_idx == pos)
             return -1;
     
+    clear_fat(root[pos].data_start);
     root[pos].filename[0] = '\0';
     change_table = true;
     return 0;
