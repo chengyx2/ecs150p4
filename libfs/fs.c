@@ -220,9 +220,9 @@ size_t update_filesize(size_t old, size_t new){
 
 int fs_mount(const char *diskname)
 {
-	/* TODO: Phase 1 */
     char* signature = "ECS150FS";
-    if(block_disk_open(diskname) == -1)
+    
+    if(block_disk_open(diskname) == -1) //disk couldn't be opened
         return -1;
     
     //read super block
@@ -232,17 +232,17 @@ int fs_mount(const char *diskname)
     if (memcmp((char*) &super_block.signature, signature, 8) != 0)
         return -1;
     
-    if (super_block.total_amount != block_disk_count())
+    if (super_block.total_amount != block_disk_count()) //superblock data doesn't match disk size (ie disk is probably corrupted or not a valid disk)
         return -1;
     
     //copy fat blocks into fat array
     fat_array = malloc(super_block.data_amount * sizeof(uint16_t));
     
-    if (fat_array == NULL)
+    if (fat_array == NULL) //malloc failed
         return -1;
     
     uint16_t* buffer = malloc(fat_length(super_block.FAT_amount) * sizeof(uint16_t));
-    if (block_to_buffer(1, buffer, super_block.FAT_amount) == -1){
+    if (block_to_buffer(1, buffer, super_block.FAT_amount) == -1){ //disk read failed (should never happen)
         free(buffer);
         return -1;
     }
@@ -251,7 +251,7 @@ int fs_mount(const char *diskname)
     
     //copy root entry blocks into root array
     root = malloc(FS_FILE_MAX_COUNT * sizeof(root_entry));
-    if (block_read(super_block.root_idx, (void*) root) == -1){
+    if (block_read(super_block.root_idx, (void*) root) == -1){ //disk read failed (should never happen)
         free(buffer);
         return -1;
     }
@@ -269,8 +269,7 @@ int fs_mount(const char *diskname)
 
 int fs_umount(void)
 {
-	/* TODO: Phase 1 */
-    if (mounted == false)
+    if (mounted == false) //disk hasn't been mounted
         return -1;
     
     //all files should be closed when unmounted
@@ -278,33 +277,33 @@ int fs_umount(void)
         if (open_files[i].root_idx != -1)
             return -1;
     
-    //update fat array and root table if they are adjusted
+    //write fat array and root table back to disk if they have been changed
     if (change_table){
         uint16_t* buffer = malloc(fat_length(super_block.FAT_amount) * sizeof(uint16_t));
         memset(buffer, 0, fat_length(super_block.FAT_amount) * sizeof(uint16_t));
         memcpy(buffer, fat_array, super_block.data_amount);
     
-        if (buffer_to_block(1, buffer, super_block.FAT_amount) == -1){
+        if (buffer_to_block(1, buffer, super_block.FAT_amount) == -1){ //disk write failed (should not happen)
             free(buffer);
             return -1;
         }
         
         free(buffer);
         
-        if (block_write(super_block.root_idx, root) == -1){
+        if (block_write(super_block.root_idx, root) == -1){ //disk write failed (should not happen)
             return -1;
         }
     }
     
     //when finish unmounting, set the mounted flag
     mounted = false;
+    //fails if disk isn't open
     return block_disk_close();
 }
 
 int fs_info(void)
 {
-	/* TODO: Phase 1 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
         
     printf("FS Info:\n");
@@ -321,14 +320,13 @@ int fs_info(void)
 
 int fs_create(const char *filename)
 {
-	/* TODO: Phase 2 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
     
-    if (check_filename(filename) == -1)
+    if (check_filename(filename) == -1) //filename is short enough
         return -1;
     
-    if (check_root(filename) == -1)
+    if (check_root(filename) == -1) //finds next free, fails if file already exists or there is no space
         return -1;
     
     strcpy((char*) root[root_next_free].filename, filename);
@@ -341,20 +339,19 @@ int fs_create(const char *filename)
 
 int fs_delete(const char *filename)
 {
-	/* TODO: Phase 2 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
     
-    if (check_filename(filename) == -1)
+    if (check_filename(filename) == -1) //filename is short enough
         return -1;
     
-    int pos = find_file(filename);
+    int pos = find_file(filename); 
     
-    if (pos == -1)
+    if (pos == -1) //file exists in root
         return -1;
     
     for (int i = 0; i < FS_OPEN_MAX_COUNT; i++)
-        if (open_files[i].root_idx == pos)
+        if (open_files[i].root_idx == pos) //fails if file is open
             return -1;
     
     root[pos].filename[0] = '\0';
@@ -364,8 +361,7 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
-	/* TODO: Phase 2 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
     
     printf("FS Ls:\n");
@@ -378,16 +374,15 @@ int fs_ls(void)
 
 int fs_open(const char *filename)
 {
-	/* TODO: Phase 3 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
     
-    if (check_filename(filename) == -1)
+    if (check_filename(filename) == -1) //filename is short enough
         return -1;
     
-    int pos = find_file(filename);
+    int pos = find_file(filename); 
     
-    if (pos == -1)
+    if (pos == -1) //file exists in root
         return -1;
     
     for (int i = 0; i < FS_OPEN_MAX_COUNT; i ++){
@@ -399,19 +394,18 @@ int fs_open(const char *filename)
         }
     }
     
-    return -1;
+    return -1; //open file table is full
 }
 
 int fs_close(int fd)
 {
-	/* TODO: Phase 3 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
     
-    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT)
+    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) //file descriptor is out of bounds 
         return -1;
     
-    if (open_files[fd].root_idx == -1)
+    if (open_files[fd].root_idx == -1) //file descriptor points to unused entry
         return -1;
     
     open_files[fd].root_idx = -1;
@@ -421,14 +415,13 @@ int fs_close(int fd)
 
 int fs_stat(int fd)
 {
-	/* TODO: Phase 3 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
     
-    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT)
+    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) //file descriptor is out of bounds 
         return -1;
     
-    if (open_files[fd].root_idx == -1)
+    if (open_files[fd].root_idx == -1) //file descriptor points to unused entry
         return -1;
     
     return root[open_files[fd].root_idx].filesize;
@@ -436,17 +429,16 @@ int fs_stat(int fd)
 
 int fs_lseek(int fd, size_t offset)
 {
-	/* TODO: Phase 3 */
-    if (!mounted)
+    if (!mounted) //disk hasn't been mounted
         return -1;
     
-    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT)
+    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) //file descriptor is out of bounds 
         return -1;
     
-    if (open_files[fd].root_idx == -1)
+    if (open_files[fd].root_idx == -1) //file descriptor points to unused entry
         return -1;
     
-    if (offset > root[open_files[fd].root_idx].filesize)
+    if (offset > root[open_files[fd].root_idx].filesize) //offset is out of bounds
         return -1;
     
     open_files[fd].offset = offset;
@@ -456,15 +448,17 @@ int fs_lseek(int fd, size_t offset)
 
 int fs_write(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
     int i, fat_free_idx;
     int amount_wrote = 0;
     size_t start_offset = open_files[fd].offset;
-    
-    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT)
+	
+    if (!mounted) //disk hasn't been mounted
+        return -1;
+	
+    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) //file descriptor is out of bounds 
         return -1;
     
-    if (open_files[fd].root_idx == -1)
+    if (open_files[fd].root_idx == -1) //file descriptor points to unused entry
         return -1;
     
     char *buffer = malloc(BLOCK_SIZE*sizeof(char));
@@ -551,14 +545,17 @@ int fs_write(int fd, void *buf, size_t count)
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
     int i;
     int amount_read = 0;
     size_t res;
-    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT)
+    
+    if (!mounted) //disk hasn't been mounted
+        return -1;
+	
+    if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) //file descriptor is out of bounds
         return -1;
     
-    if (open_files[fd].root_idx == -1)
+    if (open_files[fd].root_idx == -1) //fd points to unused entry
         return -1;
     
     char *buffer = malloc(BLOCK_SIZE*sizeof(char));
