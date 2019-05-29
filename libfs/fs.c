@@ -39,6 +39,7 @@ typedef struct file_descriptor{
     size_t offset;
     //record the block index where the offset locates
     uint16_t block_idx;
+    bool invalid_block;
 }file_descriptor;
 
 typedef root_entry* root_dir;
@@ -200,27 +201,10 @@ size_t check_and_copy(char* block, char* buff, size_t count, size_t block_offset
 }
 
 size_t write_bytes(char* block, char* buff, size_t count, size_t block_offset, size_t buff_offset, int fd){
-    bool reach_end = false;
-    int fat_free_idx;
     for(int j = 0; j < count; j ++){
-        if(block[block_offset + j] == EOF){
-            reach_end = true;
-        }
         block[block_offset + j] = buff[buff_offset + j];
     }
-    if (reach_end && count < BLOCK_SIZE - block_offset){
-        block[count] = EOF;
-    }else if(reach_end && count == BLOCK_SIZE - block_offset){
-        fat_free_idx = find_fat_next_free();
-        if (fat_free_idx != -1){
-            fat_array[open_files[fd].block_idx] = fat_free_idx;
-            fat_array[fat_free_idx] = FAT_EOC;
-            memset(block, 0, BLOCK_SIZE);
-            block[0] = EOF;
-            open_files[fd].block_idx = fat_array[open_files[fd].block_idx];
-            block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block);
-        }
-    }
+    
     open_files[fd].offset += count;
     return count;
 }
@@ -310,6 +294,7 @@ int fs_umount(void)
     
     //when finish unmounting, set the mounted flag
     mounted = false;
+    change_table = false;
     //fails if disk isn't open
     return block_disk_close();
 }
@@ -404,6 +389,7 @@ int fs_open(const char *filename)
             open_files[i].root_idx = pos;
             open_files[i].offset = 0;
             open_files[i].block_idx = root[pos].data_start;
+            open_files[i].invalid_block = false;
             return i;
         }
     }
@@ -455,6 +441,9 @@ int fs_lseek(int fd, size_t offset)
     if (offset > root[open_files[fd].root_idx].filesize) //offset is out of bounds
         return -1;
     
+    if (offset == root[open_files[fd].root_idx].filesize && offset % BLOCK_SIZE == 0){
+        open_files[fd].invalid_block = true;
+    }
     open_files[fd].offset = offset;
     
     return 0;
@@ -479,14 +468,19 @@ int fs_write(int fd, void *buf, size_t count)
     int num_blocks = get_num_blocks(count, open_files[fd].offset);
     int diff = BLOCK_SIZE - (open_files[fd].offset % BLOCK_SIZE);
     
-    if (root[open_files[fd].root_idx].data_start == FAT_EOC){
+    change_table = true;
+    
+    if (root[open_files[fd].root_idx].data_start == FAT_EOC || open_files[fd].invalid_block){
         fat_free_idx = find_fat_next_free();
         if (fat_free_idx == -1)
             return amount_wrote;
         else{
             open_files[fd].block_idx = fat_free_idx;
-            root[open_files[fd].root_idx].data_start = fat_free_idx;
             fat_array[fat_free_idx] = FAT_EOC;
+            if (root[open_files[fd].root_idx].data_start == FAT_EOC){
+                root[open_files[fd].root_idx].data_start = fat_free_idx;
+            }
+            open_files[fd].invalid_block = false;
         }
     }
     else{
@@ -504,6 +498,9 @@ int fs_write(int fd, void *buf, size_t count)
         block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
         root[open_files[fd].root_idx].filesize = update_filesize(root[open_files[fd].root_idx].filesize, start_offset + amount_wrote);
         
+        if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
+            open_files[fd].invalid_block = true;
+        }
         return amount_wrote;
     }
     
@@ -553,6 +550,9 @@ int fs_write(int fd, void *buf, size_t count)
         amount_wrote = count;
     }
     root[open_files[fd].root_idx].filesize = update_filesize(root[open_files[fd].root_idx].filesize, start_offset + amount_wrote);
+    if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
+        open_files[fd].invalid_block = true;
+    }
     return amount_wrote;
 }
 
@@ -586,6 +586,9 @@ int fs_read(int fd, void *buf, size_t count)
     }
     else{
         res = check_and_copy(buffer, buf, count, open_files[fd].offset, 0, fd);
+        if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
+            open_files[fd].invalid_block = true;
+        }
         return res;
     }
     
@@ -612,7 +615,9 @@ int fs_read(int fd, void *buf, size_t count)
         res = check_and_copy(buffer, buf , count - amount_read, 0, amount_read, fd);
         amount_read += res;
     }
-    
+    if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
+        open_files[fd].invalid_block = true;
+    }
     return amount_read;
 }
 

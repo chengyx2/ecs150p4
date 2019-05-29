@@ -189,7 +189,8 @@ void thread_fs_add(void *arg)
 	buf = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (!buf)
 		die_perror("mmap");
-
+    
+    
 	/* Now, deal with our filesystem:
 	 * - mount, create a new file, copy content of host file into this new
 	 *   file, close the new file, and umount
@@ -200,15 +201,18 @@ void thread_fs_add(void *arg)
 		fs_umount();
 		die("Cannot create file");
 	}
+    
 
 	fs_fd = fs_open(filename);
 	if (fs_fd < 0) {
 		fs_umount();
 		die("Cannot open file");
 	}
-
+    
 	written = fs_write(fs_fd, buf, st.st_size);
-	if (fs_close(fs_fd)) {
+    
+    
+    if (fs_close(fs_fd)) {
 		fs_umount();
 		die("Cannot close file");
 	}
