@@ -119,6 +119,7 @@ void test_read(char* diskname, char* filename, size_t offset){
     read = fs_read(fs_fd, buf, len);
     
     assert(read == 4);
+    printf("%s", buf);
     assert(memcmp(buf, "cdef",len) == 0);
     
     if (fs_close(fs_fd)) {
