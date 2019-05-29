@@ -11,7 +11,6 @@
 #define FAT_EOC 0xFFFF
 #define fat_length(fat_amount) ((fat_amount)*BLOCK_SIZE/2)
 
-/* TODO: Phase 1 */
 //super block structure definition
 typedef struct superblock{
     uint64_t signature;
@@ -113,7 +112,7 @@ int find_fat_next_free(){
     return -1;
 }
 
-//check whether the filename is valid
+//check whether the filename is valid by checking that length is less than FS_FILENAME_LEN
 int check_filename(const char* filename){
     bool valid_file = false;
     if(filename[0] == '\0'){
@@ -130,6 +129,7 @@ int check_filename(const char* filename){
     return 0;
 }
 
+//reset fat blocks to 0 when file is deleted
 void clear_fat(size_t curr){
     size_t next;
     while (fat_array[curr] != FAT_EOC){
@@ -173,7 +173,7 @@ int find_file(const char *filename){
 //calculate the number of blocks we need to read or write
 int get_num_blocks(size_t count, size_t offset){
     int diff = BLOCK_SIZE - offset % BLOCK_SIZE;
-    // if count fits within the current block
+    //if count fits within the current block
     if (count < diff)
         return 1;
     //count evenly fits within multiple blocks
@@ -185,7 +185,7 @@ int get_num_blocks(size_t count, size_t offset){
         return (count - diff) / BLOCK_SIZE + 2;
 }
 
-
+//copy bytes from block to buffer for fs_read
 size_t check_and_copy(char* block, char* buff, size_t count, size_t block_offset, size_t buff_offset, int fd){
     for(int j = 0; j < count; j ++){
         if (block[block_offset + j] != EOF)
@@ -200,6 +200,7 @@ size_t check_and_copy(char* block, char* buff, size_t count, size_t block_offset
     return count;
 }
 
+//copy bytes from buffer to block for fs_write
 size_t write_bytes(char* block, char* buff, size_t count, size_t block_offset, size_t buff_offset, int fd){
     for(int j = 0; j < count; j ++){
         block[block_offset + j] = buff[buff_offset + j];
@@ -232,18 +233,19 @@ int fs_mount(const char *diskname)
     if (super_block.total_amount != block_disk_count()) //superblock data doesn't match disk size (ie disk is probably corrupted or not a valid disk)
         return -1;
     
-    //copy fat blocks into fat array
+   
     fat_array = malloc(super_block.data_amount * sizeof(uint16_t));
     
     if (fat_array == NULL) //malloc failed
         return -1;
-    
+	
+    //read fat block into buffer
     uint16_t* buffer = malloc(fat_length(super_block.FAT_amount) * sizeof(uint16_t));
     if (block_to_buffer(1, buffer, super_block.FAT_amount) == -1){ //disk read failed (should never happen)
         free(buffer);
         return -1;
     }
-    
+    //copy fat blocks into fat array
     memcpy(fat_array, buffer, super_block.data_amount);
     
     //copy root entry blocks into root array
@@ -276,6 +278,7 @@ int fs_umount(void)
     
     //write fat array and root table back to disk if they have been changed
     if (change_table){
+	//create buffer, and zero it, then copy fat table into buffer
         uint16_t* buffer = malloc(fat_length(super_block.FAT_amount) * sizeof(uint16_t));
         memset(buffer, 0, fat_length(super_block.FAT_amount) * sizeof(uint16_t));
         memcpy(buffer, fat_array, super_block.data_amount);
@@ -326,7 +329,8 @@ int fs_create(const char *filename)
     
     if (check_root(filename) == -1) //finds next free, fails if file already exists or there is no space
         return -1;
-    
+	
+    //initialize root entry
     strcpy((char*) root[root_next_free].filename, filename);
     root[root_next_free].filesize = 0;
     root[root_next_free].data_start = FAT_EOC;
@@ -345,14 +349,14 @@ int fs_delete(const char *filename)
     
     int pos = find_file(filename); 
     
-    if (pos == -1) //file exists in root
+    if (pos == -1) //file doesn't exist in root, fail
         return -1;
     
     for (int i = 0; i < FS_OPEN_MAX_COUNT; i++)
         if (open_files[i].root_idx == pos) //fails if file is open
             return -1;
     
-    clear_fat(root[pos].data_start);
+    clear_fat(root[pos].data_start); //clear fat table entries
     root[pos].filename[0] = '\0';
     change_table = true;
     return 0;
@@ -381,11 +385,11 @@ int fs_open(const char *filename)
     
     int pos = find_file(filename); 
     
-    if (pos == -1) //file exists in root
+    if (pos == -1) //file doesn't exist in root, fail
         return -1;
-    
+    //search for space in open file table
     for (int i = 0; i < FS_OPEN_MAX_COUNT; i ++){
-        if ( open_files[i].root_idx == -1){
+        if ( open_files[i].root_idx == -1){ //if space is found, initialize openfile table entry
             open_files[i].root_idx = pos;
             open_files[i].offset = 0;
             open_files[i].block_idx = root[pos].data_start;
@@ -441,7 +445,7 @@ int fs_lseek(int fd, size_t offset)
     if (offset > root[open_files[fd].root_idx].filesize) //offset is out of bounds
         return -1;
     
-    if (offset == root[open_files[fd].root_idx].filesize && offset % BLOCK_SIZE == 0){
+    if (offset == root[open_files[fd].root_idx].filesize && offset % BLOCK_SIZE == 0){ //offset is at end and the next byte needs to be in a new block
         open_files[fd].invalid_block = true;
     }
     open_files[fd].offset = offset;
@@ -464,17 +468,17 @@ int fs_write(int fd, void *buf, size_t count)
     if (open_files[fd].root_idx == -1) //file descriptor points to unused entry
         return -1;
     
-    char *buffer = malloc(BLOCK_SIZE*sizeof(char));
-    int num_blocks = get_num_blocks(count, open_files[fd].offset);
+    char *block_buf = malloc(BLOCK_SIZE*sizeof(char)); //allocate block buffer
+    int num_blocks = get_num_blocks(count, open_files[fd].offset); //calculate blocks to write
     int diff = BLOCK_SIZE - (open_files[fd].offset % BLOCK_SIZE);
     
     change_table = true;
     
-    if (root[open_files[fd].root_idx].data_start == FAT_EOC || open_files[fd].invalid_block){
-        fat_free_idx = find_fat_next_free();
-        if (fat_free_idx == -1)
+    if (root[open_files[fd].root_idx].data_start == FAT_EOC || open_files[fd].invalid_block){ //first block of empty file or beginning of unallocated block
+        fat_free_idx = find_fat_next_free(); //find next block
+        if (fat_free_idx == -1) //disk is full
             return amount_wrote;
-        else{
+        else{ //update block chain
             open_files[fd].block_idx = fat_free_idx;
             fat_array[fat_free_idx] = FAT_EOC;
             if (root[open_files[fd].root_idx].data_start == FAT_EOC){
@@ -483,30 +487,30 @@ int fs_write(int fd, void *buf, size_t count)
             open_files[fd].invalid_block = false;
         }
     }
-    else{
-        block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
+    else{ //read current block
+        block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf);
     }
     
-    if (count > diff){
-        write_bytes(buffer, buf, diff, open_files[fd].offset % BLOCK_SIZE, 0, fd);
+    if (count > diff){ //writing more than one block, write to end of block, then write to disk
+        write_bytes(block_buf, buf, diff, open_files[fd].offset % BLOCK_SIZE, 0, fd);
         amount_wrote += diff;
-        block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
+        block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf);
     }
-    else{
-        write_bytes(buffer, buf, count, open_files[fd].offset % BLOCK_SIZE, 0, fd);
+    else{ //write less than one block, write section, write to disk, then return
+        write_bytes(block_buf, buf, count, open_files[fd].offset % BLOCK_SIZE, 0, fd);
         amount_wrote += count;
-        block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
+        block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf);
         root[open_files[fd].root_idx].filesize = update_filesize(root[open_files[fd].root_idx].filesize, start_offset + amount_wrote);
         
-        if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
-            open_files[fd].invalid_block = true;
+        if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){ //perfectly fills last block
+            open_files[fd].invalid_block = true; //need to allocate another block on next write
         }
         return amount_wrote;
     }
     
-    for (i = 1; i < num_blocks - 1; i++){
+    for (i = 1; i < num_blocks - 1; i++){ //write "middle" blocks directly to disk
         
-        if (fat_array[open_files[fd].block_idx] == FAT_EOC){
+        if (fat_array[open_files[fd].block_idx] == FAT_EOC){ //if last block allocate a new one
             
             fat_free_idx = find_fat_next_free();
             if (fat_free_idx == -1){
@@ -526,32 +530,31 @@ int fs_write(int fd, void *buf, size_t count)
         open_files[fd].offset += BLOCK_SIZE;
         amount_wrote += BLOCK_SIZE;
     }
-    if (num_blocks > 1){
-        //check if it is the last block
-        if (fat_array[open_files[fd].block_idx] == FAT_EOC){
-            
+    if (num_blocks > 1){ //more than 1 block, need to write last block
+        if (fat_array[open_files[fd].block_idx] == FAT_EOC){ //if last block allocate a new one
             fat_free_idx = find_fat_next_free();
-            if (fat_free_idx == -1){
+            if (fat_free_idx == -1){ //return amount wrote if disk is full
                 root[open_files[fd].root_idx].filesize = update_filesize(root[open_files[fd].root_idx].filesize, start_offset + amount_wrote);
                 return amount_wrote;
             }
-            else{
+            else{ //add next block to chain and clear block buff for writing
                 fat_array[open_files[fd].block_idx] = fat_free_idx;
                 fat_array[fat_free_idx] = FAT_EOC;
-                memset(buffer, 0, BLOCK_SIZE);
+                memset(block_buf, 0, BLOCK_SIZE);
             }
-        }else{
+        } else{ //read last block to write to
             open_files[fd].block_idx = fat_array[open_files[fd].block_idx];
-            block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
+            block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf);
         }
-        write_bytes(buffer, buf, count - amount_wrote, open_files[fd].offset % BLOCK_SIZE, amount_wrote, fd);
-        block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
+	//write into block_buf and then disk
+        write_bytes(block_buf, buf, count - amount_wrote, open_files[fd].offset % BLOCK_SIZE, amount_wrote, fd);
+        block_write(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf);
         
         amount_wrote = count;
     }
     root[open_files[fd].root_idx].filesize = update_filesize(root[open_files[fd].root_idx].filesize, start_offset + amount_wrote);
-    if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
-        open_files[fd].invalid_block = true;
+    if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){//perfectly fills last block
+        open_files[fd].invalid_block = true; //need to allocate another block on next write
     }
     return amount_wrote;
 }
@@ -571,35 +574,34 @@ int fs_read(int fd, void *buf, size_t count)
     if (open_files[fd].root_idx == -1) //fd points to unused entry
         return -1;
     
-    char *buffer = malloc(BLOCK_SIZE*sizeof(char));
+    char *block_buf = malloc(BLOCK_SIZE*sizeof(char));
     
-    int num_blocks = get_num_blocks(count, open_files[fd].offset);
+    int num_blocks = get_num_blocks(count, open_files[fd].offset); //get num blocks to read
     int diff = BLOCK_SIZE - (open_files[fd].offset % BLOCK_SIZE);
     
-    block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
-    if (count > diff){
-        res = check_and_copy(buffer, buf, diff, open_files[fd].offset, 0, fd);
+    block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf); //read first block
+    if (count > diff){ //if reading more than one block, read from offset to end
+        res = check_and_copy(block_buf, buf, diff, open_files[fd].offset, 0, fd);
         if (res != diff)
             return res;
         else
             amount_read += res;
     }
-    else{
-        res = check_and_copy(buffer, buf, count, open_files[fd].offset, 0, fd);
-        if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
-            open_files[fd].invalid_block = true;
+    else{ //read less than one block, then return
+        res = check_and_copy(block_buf, buf, count, open_files[fd].offset, 0, fd);
+        if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){//perfectly fills last block
+             open_files[fd].invalid_block = true; //need to allocate another block on next write
         }
         return res;
     }
     
-    for (i = 1; i < num_blocks - 1; i++){
+    for (i = 1; i < num_blocks - 1; i++){ //read middle blocks directly from disk to user buf
         //get next block idx
-        
         open_files[fd].block_idx = fat_array[open_files[fd].block_idx];
-        //check if it is the last block
-        if (fat_array[open_files[fd].block_idx] == FAT_EOC){
-            block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
-            res = check_and_copy(buffer, buf , count - amount_read, 0, amount_read, fd);
+	    
+        if (fat_array[open_files[fd].block_idx] == FAT_EOC){ //check if it is the last block
+            block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf); //read into block buf
+            res = check_and_copy(block_buf, buf , count - amount_read, 0, amount_read, fd); //copy the rest
             amount_read += res;
             return amount_read;
         }
@@ -608,15 +610,14 @@ int fs_read(int fd, void *buf, size_t count)
         open_files[fd].offset += BLOCK_SIZE;
         amount_read += BLOCK_SIZE;
     }
-    if (num_blocks > 1){
-        
+    if (num_blocks > 1){ //read last block into block_buf and copy the rest of count into user buf  
         open_files[fd].block_idx = fat_array[open_files[fd].block_idx];
-        block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) buffer);
-        res = check_and_copy(buffer, buf , count - amount_read, 0, amount_read, fd);
+        block_read(open_files[fd].block_idx + 2 + super_block.FAT_amount, (void*) block_buf);
+        res = check_and_copy(block_buf, buf , count - amount_read, 0, amount_read, fd);
         amount_read += res;
     }
-    if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){
-        open_files[fd].invalid_block = true;
+    if (open_files[fd].offset == root[open_files[fd].root_idx].filesize && open_files[fd].offset % BLOCK_SIZE == 0){//perfectly fills last block
+        open_files[fd].invalid_block = true; //need to allocate another block on next write
     }
     return amount_read;
 }
