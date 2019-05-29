@@ -50,8 +50,8 @@ To delete a file, we also do some sanity checks first(e.g. if the file system
 is mounted, if the file name is valid, if the file exists and if the file is 
 open). Then we clear the FAT table for this file and set the first character 
 of the file name to be null so that this root entry can be regarded as empty.
- 
-###File descriptor operations
+
+##File descriptor operations
 
 For implementing file decriptor operations, we need to define a file descriptor
 struct. This struct consists of the root entry index of the file, the current 
@@ -72,7 +72,7 @@ file descriptor is valid. If so, we reset its root index so that it is free.
 Finally, fs_lseek helps us to modify the offset in the file descriptor and 
 fs_stat returns the file size in the file root entry after some danity checks.
 
-###File reading/writing
+##File reading/writing
 
 For both reading and writing, we divide all data blocks into three parts (the 
 first block, the last block and those middle blocks between them). We can
